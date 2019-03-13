@@ -1,12 +1,13 @@
-import os, pwd, shutil, subprocess, sys
+import os, pwd, shutil, subprocess, sys, random
 import configparser
 from melee import enums
 
 """Class for making confuguration and interfacing with the Dolphin emulator easy"""
 class Dolphin:
 
-    """Do a some setup of some important dolphin paths"""
-    def __init__(self, ai_port, opponent_port, opponent_type, logger=None):
+    """Do some setup of some important dolphin paths"""
+    def __init__(self, ai_port, opponent_port, opponent_type, logger=None, human=False, emuSpeed=1.0):
+        self.nonce = "_" + str(random.random())[2:]
         self.ai_port = ai_port
         self.opponent_port = opponent_port
         self.logger = logger
@@ -15,35 +16,41 @@ class Dolphin:
         mem_watcher_path = config_path + "MemoryWatcher/"
         pipes_path = config_path + "Pipes/"
 
-        #Create the MemoryWatcher directory if it doesn't already exist
+        # Create the MemoryWatcher directory if it doesn't already exist
         if not os.path.exists(mem_watcher_path):
             os.makedirs(mem_watcher_path)
             print("WARNING: Had to create a MemoryWatcher directory in Dolphin just now. " \
                 "You may need to restart Dolphin and this program in order for this to work. " \
                 "(You should only see this warning once)")
 
-        #Copy over Locations.txt that is adjacent to this file
+        # Copy over Locations.txt that is adjacent to this file
         path = os.path.dirname(os.path.realpath(__file__))
         shutil.copy(path + "/Locations.txt", mem_watcher_path)
 
-        #Create the Pipes directory if it doesn't already exist
+        # Create the Pipes directory if it doesn't already exist
         if not os.path.exists(pipes_path):
             os.makedirs(pipes_path)
             print("WARNING: Had to create a Pipes directory in Dolphin just now. " \
                 "You may need to restart Dolphin and this program in order for this to work. " \
                 "(You should only see this warning once)")
 
-        pipes_path += "Bot" + str(ai_port)
-        if not os.path.exists(pipes_path):
-            os.mkfifo(pipes_path)
+        pipe1_path = pipes_path + "Bot" + str(ai_port) + self.nonce
+        if not os.path.exists(pipe1_path):
+            os.mkfifo(pipe1_path)
+
+		# Added by me (John McKeown)#################
+        pipe2_path = pipes_path + "Bot" + str(opponent_port) + self.nonce
+        if not os.path.exists(pipe2_path):
+            os.mkfifo(pipe2_path)
+		#############################################
 
         #setup the controllers specified
-        self.setup_controller(ai_port)
-        self.setup_controller(opponent_port, opponent_type)
+        self.setup_controller(ai_port, speed=emuSpeed)
+        self.setup_controller(opponent_port, opponent_type, human=human, speed=emuSpeed)
 
     """Setup the necessary files for dolphin to recognize the player at the given
     controller port and type"""
-    def setup_controller(self, port, controllertype=enums.ControllerType.STANDARD):
+    def setup_controller(self, port, controllertype=enums.ControllerType.STANDARD, human=False, speed=1.0):
         #Read in dolphin's controller config file
         controller_config_path = self.get_dolphin_config_path() + "GCPadNew.ini"
         config = configparser.SafeConfigParser()
@@ -54,8 +61,8 @@ class Dolphin:
         if not config.has_section(section):
             config.add_section(section)
 
-        if controllertype == enums.ControllerType.STANDARD:
-            config.set(section, 'Device', 'Pipe/0/Bot' + str(port))
+        if controllertype == enums.ControllerType.STANDARD and not human:
+            config.set(section, 'Device', 'Pipe/0/Bot' + str(port) + self.nonce)
             config.set(section, 'Buttons/A', 'Button A')
             config.set(section, 'Buttons/B', 'Button B')
             config.set(section, 'Buttons/X', 'Button X')
@@ -83,6 +90,7 @@ class Dolphin:
             config.set(section, 'C-Stick/Right', 'Axis C X +')
             config.set(section, 'Triggers/L-Analog', 'Axis L -+')
             config.set(section, 'Triggers/R-Analog', 'Axis R -+')
+
         #This section is unused if it's not a standard input (I think...)
         else:
             config.set(section, 'Device', 'XInput2/0/Virtual core pointer')
@@ -94,11 +102,14 @@ class Dolphin:
         dolphinn_config_path = self.get_dolphin_config_path() + "Dolphin.ini"
         config = configparser.SafeConfigParser()
         config.read(dolphinn_config_path)
+
         #Indexed at 0. "6" means standard controller, "12" means GCN Adapter
         # The enum is scoped to the proper value, here
         config.set("Core", 'SIDevice'+str(port-1), controllertype.value)
+
         #Enable Cheats
         config.set("Core", 'enablecheats', "True")
+        config.set("Core", 'emulationspeed', str(speed))
         #Turn on background input so we don't need to have window focus on dolphin
         config.set("Input", 'backgroundinput', "True")
         with open(dolphinn_config_path, 'w') as dolphinfile:
@@ -116,24 +127,25 @@ class Dolphin:
             config.write(dolphinfile)
 
     """Run dolphin-emu"""
-    def run(self, render=True, iso_path=None, movie_path=None, dolphin_executable_path=None, dolphin_config_path=None):
-        if dolphin_executable_path is not None:
-            command = [dolphin_executable_path]
-        else:
-            command = ["dolphin-emu"]
+    def run(self, render=True, iso_path=None, movie_path=None):
+        command = ["/home/user/git/github/others/MeleeStuff/dolphin/headedBuild/Binaries/dolphin-emu-nogui"]
         if not render:
-            #Use the "Null" renderer
-            command.append("-v")
-            command.append("Null")
-        if movie_path is not None:
+            print("NULL RENDERER CHOSEN")
+            # Use the "Null" renderer
+            # command.append("-v")
+            # command.append("Null")
+            self.set_dolphin_renderer("Null")
+        else:
+            print("OGL RENDERER CHOSEN")
+            # command.append("-v")
+            # command.append("OGL")
+            self.set_dolphin_renderer("OGL")
+        if movie_path != None:
             command.append("-m")
             command.append(movie_path)
-        if iso_path is not None:
+        if iso_path != None:
             command.append("-e")
             command.append(iso_path)
-        if dolphin_config_path is not None:
-            command.append("-u")
-            command.append(dolphin_config_path)
         self.process = subprocess.Popen(command)
 
     """Terminate the dolphin process"""
@@ -192,8 +204,19 @@ class Dolphin:
 
     """Get the path of the named pipe input file for the given controller port"""
     def get_dolphin_pipes_path(self, port):
-        return self.get_dolphin_home_path() + "/Pipes/Bot" + str(port)
+        return self.get_dolphin_home_path() + "/Pipes/Bot" + str(port) + self.nonce
 
     """Get the MemoryWatcher socket path"""
     def get_memory_watcher_socket_path(self):
         return self.get_dolphin_home_path() + "/MemoryWatcher/MemoryWatcher"
+
+    def set_dolphin_renderer(self,renderer):
+        #Change the bot's controller port to use "standard" input
+        dolphinn_config_path = self.get_dolphin_config_path() + "Dolphin.ini"
+        config = configparser.SafeConfigParser()
+        config.read(dolphinn_config_path)
+
+        #Enable Cheats
+        config.set("Core", "gfxbackend", renderer)
+        with open(dolphinn_config_path, 'w') as dolphinfile:
+            config.write(dolphinfile)

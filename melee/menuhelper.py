@@ -12,12 +12,16 @@ import math
     start = Automatically start the match when it's ready
         NOTE: All controller cursors must be above the character level for this
         to work. The match won't start otherwise."""
-def choosecharacter(character, gamestate, port, opponent_port, controller, swag=False, start=False):
+def choosecharacter(character, gamestate, controller, flipped, swag=True, start=False):
     #Figure out where the character is on the select screen
     #NOTE: This assumes you have all characters unlocked
     #Positions will be totally wrong if something is not unlocked
-    ai_state = gamestate.player[port]
-    opponent_state = gamestate.player[opponent_port]
+    if flipped:
+        ai_state = gamestate.opponent_state
+        opponent_state = gamestate.ai_state
+    else:
+        ai_state = gamestate.ai_state
+        opponent_state = gamestate.opponent_state
     row = character.value // 9
     column = character.value % 9
     #The random slot pushes the bottom row over a slot, so compensate for that
@@ -114,7 +118,7 @@ def choosecharacter(character, gamestate, port, opponent_port, controller, swag=
         if ai_state.cursor_y < target_y - wiggleroom:
             controller.tilt_analog(enums.Button.BUTTON_MAIN, .5, 1)
             return
-        #Move down if we're too high
+        #Move downn if we're too high
         if ai_state.cursor_y > target_y + wiggleroom:
             controller.tilt_analog(enums.Button.BUTTON_MAIN, .5, 0)
             return
@@ -193,24 +197,27 @@ WARNING: There's a condition on this you need to know. The way controllers work
     go to uplugged. If you've ever played Melee, you probably know this. If your
     friend walks away, you have to press the A button on THEIR controller. (or
     else actually unplug the controller) No way around it."""
-def changecontrollerstatus(controller, gamestate, targetport, port, status, character=None):
-    ai_state = gamestate.player[port]
+def changecontrollerstatus(controller, gamestate, port, status, flipped, character=None):
+    ai_state = gamestate.ai_state
+    if flipped:
+        ai_state = gamestate.opponent_state
+
     target_x, target_y = 0,-2.2
-    if targetport == 1:
+    if port == 1:
         target_x = -31.5
-    if targetport == 2:
+    if port == 2:
         target_x = -16.5
-    if targetport == 3:
+    if port == 3:
         target_x = -1
-    if targetport == 4:
+    if port == 4:
         target_x = 14
     wiggleroom = 1.5
 
     correctcharacter = (character == None) or \
-        (character == gamestate.player[targetport].character)
+        (character == gamestate.player[port].character)
 
     #if we're in the right state already, do nothing
-    if gamestate.player[targetport].controller_status == status and correctcharacter:
+    if gamestate.player[port].controller_status == status and correctcharacter:
         controller.empty_input()
         return
 
@@ -237,3 +244,59 @@ def changecontrollerstatus(controller, gamestate, targetport, port, status, char
         controller.press_button(enums.Button.BUTTON_A)
     else:
         controller.release_button(enums.Button.BUTTON_A)
+
+
+def setAILevel(controller, gamestate, port, level, flipped, stage = 1):
+    if stage == 3:
+        return stage
+    ai_state = gamestate.ai_state
+    if flipped:
+        ai_state = gamestate.opponent_state
+
+    target_x, target_y = 0,-15
+    if port == 1:
+        target_x = -31.5
+    if port == 2:
+        target_x = -16.5
+    if port == 3:
+        target_x = -1
+    if port == 4:
+        target_x = 14
+    wiggleroom = 1.0
+
+    # target_x -= 1
+    if stage == 2:
+        target_x += level*(7/5)
+
+
+    #Move up if we're too low
+    if ai_state.cursor_y < target_y - wiggleroom:
+        controller.tilt_analog(enums.Button.BUTTON_MAIN, .5, 1)
+        return stage
+    #Move downn if we're too high
+    if ai_state.cursor_y > target_y + wiggleroom:
+        controller.tilt_analog(enums.Button.BUTTON_MAIN, .5, 0)
+        return stage
+    #Move right if we're too left
+    if ai_state.cursor_x < target_x - wiggleroom:
+        controller.tilt_analog(enums.Button.BUTTON_MAIN, 1, .5)
+        return stage
+    #Move left if we're too right
+    if ai_state.cursor_x > target_x + wiggleroom:
+        controller.tilt_analog(enums.Button.BUTTON_MAIN, 0, .5)
+        return stage
+
+    #If we get in the right area, press A until we're in the right state
+    controller.tilt_analog(enums.Button.BUTTON_MAIN, .5, .5)
+    if controller.prev.button[enums.Button.BUTTON_A] == False:
+        controller.press_button(enums.Button.BUTTON_A)
+        return stage
+    else:
+        controller.release_button(enums.Button.BUTTON_A)
+        return stage + 1
+
+
+# def get99Stocks(controller,gamestate,controller):
+# """Allows you to get 99 stocks for model training."""
+#     target_x = 30
+#     target_y = 5

@@ -1,40 +1,31 @@
 from . import ddqn as dqn
 import melee
 from melee import enums
-import random
+import random, os
 import numpy as np
 import pandas as pd
 import itertools
 import math
 
-def rectToPolar(x,y):
-	x -= 0.5
-	y -= 0.5
-	r = math.sqrt(x**2 + y**2)
-	theta = np.arctan2(y,x)
-	theta /= 2*math.pi
-	theta += int(theta < 0) #add one if theta is too small
-	return (r,theta)
-
-def polarToRect(r,theta):
-	theta *= 2*math.pi
-	x = r*np.cos(theta) + 0.5
-	y = r*np.sin(theta) + 0.5
-	return (x,y)
+def makeSureFolderExists(folder):
+	try:
+	    os.makedirs(folder)
+	except FileExistsError:
+	    # directory already exists
+	    pass
 
 
 class AI:
-	def __init__(self, stateSize = 34, actionSize = 7, loadAndSave = False, nExpFiles = 100, train=False):
+	def __init__(self, stateDim = 34, actionDim = 7, loadAndSave = False, nExpFiles = 100, train=False):
 		self.train = train
 		self.nExpFiles = nExpFiles
 		self.loadAndSave = loadAndSave
 		self.movesMade = 0
-		self.stateSize = stateSize
-		self.actionSize = actionSize
-		self.dqn = dqn.DQNAgent(stateSize, actionSize)
+		self.stateDim = stateDim
+		self.actionDim = actionDim
+		self.dqn = dqn.DQNAgent(stateDim, actionDim)
 		self.dqn.epsilon = 1.0
 		self.prevState = None
-
 
 		if self.loadAndSave:
 			try:
@@ -48,20 +39,17 @@ class AI:
 
 	def ctrlToAction(self,ctrl):
 		action = []
-		r,theta = rectToPolar(*ctrl.main_stick)
-		action.append(r)
-		action.append(theta)
+		action.extend(ctrl.main_stick)
 		action.append(ctrl.button[enums.Button.BUTTON_A])
 		action.append(ctrl.button[enums.Button.BUTTON_B])
 		action.append(ctrl.button[enums.Button.BUTTON_L])
 		action.append(ctrl.button[enums.Button.BUTTON_Y])
 		action.append(ctrl.button[enums.Button.BUTTON_Z])
-		return action
-
+		return np.array(action)
 
 	def ctrlFromAction(self,action):
 		ctrl = melee.controller.ControllerState()
-		ctrl.main_stick = polarToRect(action[0],action[1])
+		ctrl.main_stick = (action[0], action[1])
 		ctrl.button[enums.Button.BUTTON_A] = action[2]
 		ctrl.button[enums.Button.BUTTON_B] = action[3]
 		ctrl.button[enums.Button.BUTTON_L] = action[4]
@@ -107,7 +95,6 @@ class AI:
 		reward += (max(curState[20] - prevState[20],0) - max(curState[4] - prevState[4],0))/200
 		return reward
 
-
 	def done(self,curState):
 		# if either player has 0 stocks, then Game Over, else the game is on!
 		done = ((curState[5] == 0) or (curState[21] == 0))
@@ -115,35 +102,34 @@ class AI:
 
 	def transformState(self,inState,ai_number):
 		state = list(tuple(inState))
-		if ai_number == 2:
-			state = list(np.array(state).round(decimals=4))
-		else:
+		if ai_number == 1:
 			for i in range(2,18):
 				tmp = state[i]
 				state[i] = state[i+16]
 				state[i+16] = tmp
-			state = list(np.array(state).round(decimals=4))
 
+		state = np.array(state).round(decimals=8) # is this bad?
+
+		# scale down certain aspects of state
+		# for "normalization" purposes of learning.
 		state[2] *= 0.05
 		state[3] *= 0.05
 		state[2+16] *= 0.05
 		state[3+16] *= 0.05
 
-
-
 		return state
 
 
-	def makeMove(self,gamestate,controller,ai_number=1):
+	def makeMove(self, gamestate, controller, ai_number=1):
 		gamestate = gamestate.tolist()
-		curState = self.transformState(gamestate,ai_number)
+		curState = self.transformState(gamestate, ai_number)
 		done = self.done(curState)
 
 		if self.prevState != None:
 			prevState = self.transformState(self.prevState,ai_number)
 
 		# Poll Network for Action
-		action = self.dqn.act(np.array([curState]))
+		action = self.dqn.act(curState.reshape(1,-1))
 		if not done:
 			self.performAction(action,controller)
 			self.movesMade += 1
@@ -169,13 +155,14 @@ class AI:
 				return
 
 			prevAction = self.ctrlToAction(controller.prev)
-			self.dqn.remember(np.array([prevState]),prevAction,reward,np.array([curState]),int(done))
+			self.dqn.remember(prevState.reshape(1,-1),prevAction,reward,curState.reshape(1,-1),int(done))
 			if self.movesMade % 100 == 0:
 				print("saving experience and loading newest model")
 				data = [self.dqn.memory[i] for i in range(0,-100,-1)]
 				df = pd.DataFrame(data)
 
 				csvFile = "experiences/exp{}.csv".format(random.randint(1,self.nExpFiles))
+				makeSureFolderExists("experiences")
 				df.to_csv(csvFile,mode='a',header=False,index=False)
 				try:
 					self.dqn.load("dqn.model")
@@ -193,3 +180,17 @@ class AI:
 		# prevState Update
 		if (ai_number == 2) and (done == False):
 			self.prevState = gamestate
+
+
+
+
+	def sendExperienceToLearner(ip,port,exp):
+		"""Sends a vector of (state,action,reward) 
+		3-tuples to the "learner server
+		"""
+		pass
+
+	def retrieveParametersFromLearner(ip, port):
+		"""Makes a request to a 'learner server' to get the latest parameters
+		for the policy."""
+		pass
